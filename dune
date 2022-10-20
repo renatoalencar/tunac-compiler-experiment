@@ -1,0 +1,4 @@
+(executable
+ (name main)
+ (preprocess (pps ppx_show))
+ (libraries binaryen tezos-micheline ppx_show.runtime))
