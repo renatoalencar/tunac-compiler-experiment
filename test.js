@@ -226,6 +226,42 @@ async function main() {
     `, { prim: 'Unit', args: [], annots: [] }, { int: 0 })
     assert(stack_n(exports, 0) === 5)
     assert(stack_n(exports, 1) === 5)
+
+    exports = await eval(`
+    { parameter unit;
+      storage int;
+      code { PUSH int 1; PUSH int 2; PUSH int 3; PUSH int 4; PUSH int 5; DUP 3 } }
+    `, { prim: 'Unit', args: [], annots: [] }, { int: 0 })
+    assert(stack_n(exports, 0) === 3)
+    assert(stack_n(exports, 1) === 5)
+
+
+    exports = await eval(`
+        { parameter unit;
+          storage int;
+          code { PUSH int 1; PUSH int 2; PUSH int 3; PUSH int 4; PUSH int 5; DIP 2 { PUSH int 7 } } }
+    `, { prim: 'Unit', args: [], annots: [] }, { int: 0 })
+    assert(stack_n(exports, 0) == 5)
+    assert(stack_n(exports, 1) == 4)
+    assert(stack_n(exports, 2) == 7)
+
+    exports = await eval(`
+        { parameter unit;
+          storage int;
+          code { PUSH int 1; PUSH int 2; PUSH int 3; PUSH int 4; PUSH int 5; DIP { PUSH int 7 } } }
+    `, { prim: 'Unit', args: [], annots: [] }, { int: 0 })
+    assert(stack_n(exports, 0) == 5)
+    assert(stack_n(exports, 1) == 7)
+    assert(stack_n(exports, 2) == 4)
+
+    exports = await eval(`
+        { parameter unit;
+          storage int;
+          code { PUSH int 1; PUSH int 2; PUSH int 3; PUSH int 4; PUSH int 5; DIP 0 { PUSH int 7 } } }
+    `, { prim: 'Unit', args: [], annots: [] }, { int: 0 })
+    assert(stack_n(exports, 0) == 7)
+    assert(stack_n(exports, 1) == 5)
+    assert(stack_n(exports, 2) == 4)
 }
 
 main()

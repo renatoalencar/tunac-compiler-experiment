@@ -217,6 +217,75 @@ let compile_drop ~env n =
   Env.free_local env node;
   block
 
+let compile_dup ~env n =
+  let n = Int32.sub n 1l in
+  let counter = Env.alloc_local env in
+  let node = Env.alloc_local env in
+  let inner_loop =
+    Cblock
+      [ Cassign (counter, Cconst_i32 n)
+      ; Cassign (node, Cglobal "stack")
+      ; Cloop
+          (Cifthenelse
+            (Cvar counter
+            , Cblock
+                [ Cassign (counter, Cop (Cwasm Wasm_sub, [ Cvar counter; Cconst_i32 1l ]))
+                ; Cassign (node, compile_cdr (Cvar node))
+                ; Cbreak ]
+            , Cblock [])) ]
+  in
+  Env.free_local env counter;
+  let block =
+    Cblock
+      [ inner_loop
+      ; compile_push ~env (compile_car (Cvar node)) ]
+  in
+  Env.free_local env node;
+  block
+
+let compile_dip ~env n block =
+  let n = Int32.sub n 1l in
+  let node = Env.alloc_local env in
+  let counter = Env.alloc_local env in
+  let inner_loop =
+    Cblock
+      [ Cassign (counter, Cconst_i32 n)
+      ; Cassign (node, Cglobal "stack")
+      ; Cloop
+          (Cifthenelse (
+            Cvar counter
+            , Cblock
+                [ Cassign (counter, Cop (Cwasm Wasm_sub, [ Cvar counter; Cconst_i32 1l ]))
+                ; Cassign (node, compile_cdr (Cvar node)) ]
+            , Cblock [] )) ]
+  in
+  Env.free_local env counter;
+
+  let pair = Env.alloc_local env in
+  let save_stack_block =
+    Cblock
+      [ Cassign (pair, Cop (Calloc 2, []))
+      ; Cstore (0, Cvar pair, Cglobal "stack")
+      ; Cstore (1, Cvar pair, Cvar node)
+      ; Cglobal_assign ("dip_stack", Cop (Cwasm Wasm_add, [ Cglobal "dip_stack"; Cconst_i32 4l ]))
+      ; Cstore (0, Cglobal "dip_stack", Cvar pair)
+      ; Cglobal_assign ("stack", compile_cdr (Cvar node)) ]
+  in
+  Env.free_local env pair;
+  Env.free_local env node;
+
+  (* Deallocate and allocate again so it does not conflict with DIP's internal block *)
+  let pair = Env.alloc_local env in
+  let restore_stack =
+    Cblock
+      [ Cassign (pair, Cop (Cload 0, [ Cglobal "dip_stack" ]))
+      ; Cstore (1, compile_cdr (Cvar pair), Cglobal "stack")
+      ; Cglobal_assign ("stack", compile_car (Cvar pair)) 
+      ; Cglobal_assign ("dip_stack", Cop (Cwasm Wasm_sub, [ Cglobal "dip_stack"; Cconst_i32 4l ] )) ]
+  in
+
+  Cblock [ inner_loop; save_stack_block; block; restore_stack ]
+
 let rec compile_instruction ~env instr =
   match instr with
   | Prim (_, I_CAR, _, _) ->
@@ -323,8 +392,20 @@ let rec compile_instruction ~env instr =
     let n = Z.to_int32 n in
     compile_drop ~env n
 
-  | Prim (_, I_DUP, _, _) ->
-    compile_push ~env (compile_car (Cglobal "stack"))
+  | Prim (_, I_DUP, [], _) ->
+    compile_dup ~env 1l
+
+  | Prim (_, I_DUP, [ Int (_, n) ], _) ->
+    compile_dup ~env (Z.to_int32 n)
+
+  | Prim (_, I_DIP, [ Int (_, n); Seq (_, instr) ], _) ->
+    let n = Z.to_int32 n in
+    let block = Cblock (List.map (compile_instruction ~env) instr) in
+    if n = 0l then block
+    else compile_dip ~env n block
+
+  | Prim (_, I_DIP, [ Seq (_, instr) ], _) ->
+    compile_dip ~env 1l (Cblock (List.map (compile_instruction ~env) instr))
 
   | _ -> assert false
 
@@ -457,6 +538,10 @@ let _ =
     Global.add_global wasm_mod "heap_top" Type.int32 true
       (Expression.Const.make wasm_mod (Literal.int32 512l));
   ignore @@ Export.add_global_export wasm_mod "heap_top" "heap_top";
+
+  ignore @@
+    Global.add_global wasm_mod "dip_stack" Type.int32 true
+      (Expression.Const.make wasm_mod (Literal.int32 256l));
 
   Memory.set_memory wasm_mod 1 10 "memory" [] true;
 
