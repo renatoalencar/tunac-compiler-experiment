@@ -136,6 +136,87 @@ let compile_pair ~env =
   Env.free_local env item;
   block
 
+let compile_dig ~env n =
+  let n = Int32.sub n 1l in
+  let counter =  Env.alloc_local env in
+  let node = Env.alloc_local env in
+  let loop =
+    Cblock
+      [ Cassign (counter, Cconst_i32 n)
+      ; Cassign (node, Cglobal "stack")
+      ; Cloop
+          (Cblock
+            [ Cassign (counter, Cop (Cwasm Wasm_sub, [ Cvar counter; Cconst_i32 1l ]))
+            ; Cassign (node, compile_cdr (Cvar node))
+            ; Cifthenelse (Cvar counter, Cbreak, Cblock []) ]) ]
+  in
+  Env.free_local env counter;
+  let a = Env.alloc_local env in
+  let block =
+    Cblock
+      [ loop
+      ; Cassign (a, compile_cdr (Cvar node))
+      ; Cstore (1, Cvar node, compile_cdr (Cvar a))
+      ; Cstore (1, Cvar a, Cglobal "stack")
+      ; Cglobal_assign ("stack", Cvar a) ]
+  in
+  Env.free_local env a;
+  Env.free_local env node;
+  block
+
+let compile_dug ~env n =
+  let n = Int32.sub n 1l in
+  let node = Env.alloc_local env in
+  let counter = Env.alloc_local env in
+  let inner_loop =
+    Cblock
+      [ Cassign (counter, Cconst_i32 n)
+      ; Cassign (node, compile_cdr (Cglobal "stack"))
+      ; Cloop
+          (Cblock
+            [ Cassign (counter, Cop (Cwasm Wasm_sub, [ Cvar counter; Cconst_i32 1l ]))
+            ; Cassign (node, compile_cdr (Cvar node))
+            ; Cifthenelse (Cvar counter, Cbreak, Cblock [])]) ]
+  in
+  Env.free_local env counter;
+  let head = Env.alloc_local env in
+  let block =
+    Cblock
+      [ inner_loop
+      ; Cassign (head, Cglobal "stack")
+      ; Cglobal_assign ("stack", compile_cdr (Cvar head))
+      ; Cstore (1, Cvar head, compile_cdr (Cvar node))
+      ; Cstore (1, Cvar node, Cvar head) ]
+  in
+  Env.free_local env node;
+  Env.free_local env head;
+  block
+
+let compile_drop ~env n =
+  let counter = Env.alloc_local env in
+  let node = Env.alloc_local env in
+  let inner_loop =
+    Cblock
+      [ Cassign (counter, Cconst_i32 n)
+      ; Cassign (node, Cglobal "stack")
+      ; Cloop
+         (Cifthenelse (
+            Cvar counter
+            , Cblock
+                [ Cassign (counter, Cop (Cwasm Wasm_sub, [ Cvar counter; Cconst_i32 1l ]))
+                ; Cassign (node, compile_cdr (Cvar node))
+                ; Cbreak ]
+            , Cblock [])) ]
+  in
+  Env.free_local env counter;
+  let block =
+    Cblock
+      [ inner_loop
+      ; Cglobal_assign ("stack", Cvar node) ]
+  in
+  Env.free_local env node;
+  block
+
 let rec compile_instruction ~env instr =
   match instr with
   | Prim (_, I_CAR, _, _) ->
@@ -227,6 +308,24 @@ let rec compile_instruction ~env instr =
     let value = Z.to_int32 z in
     compile_push ~env (Cconst_i32 value)
 
+  | Prim (_, I_DIG, [ Int (_, n) ], _) ->
+    let n = Z.to_int32 n in
+    compile_dig ~env n
+
+  | Prim (_, I_DUG, [ Int (_, n) ], _) ->
+    let n = Z.to_int32 n in
+    compile_dug ~env n
+
+  | Prim (_, I_DROP, [], _) ->
+    compile_drop ~env 1l
+
+  | Prim (_, I_DROP, [ Int (_, n) ], _) ->
+    let n = Z.to_int32 n in
+    compile_drop ~env n
+
+  | Prim (_, I_DUP, _, _) ->
+    compile_push ~env (compile_car (Cglobal "stack"))
+
   | _ -> assert false
 
 
@@ -273,6 +372,8 @@ and compile_wasm_operation wasm_mod operation params =
 
   | _ -> assert false
 
+let loop_stack = ref []
+
 let rec compile_statement wasm_mod statement =
   match statement with
   | Cblock statements ->
@@ -298,8 +399,18 @@ let rec compile_statement wasm_mod statement =
       (compile_statement wasm_mod _if)
       (compile_statement wasm_mod _else)
 
-  | _ -> assert false
+  | Cloop statement ->
+    let name = gensym "loop" in
+    loop_stack := name :: !loop_stack;
+    let loop =
+      Expression.Loop.make wasm_mod name
+        (compile_statement wasm_mod statement)
+    in
+    loop_stack := List.tl !loop_stack;
+    loop
 
+  | Cbreak ->
+    Expression.Break.make wasm_mod (List.hd !loop_stack) (Expression.Null.make ()) (Expression.Null.make ())
 
 let read_all () =
   let rec aux s =

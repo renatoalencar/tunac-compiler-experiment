@@ -35,6 +35,21 @@ function push(exports, value) {
     exports.stack.value = create_pair(exports, value, exports.stack.value)
 }
 
+function stack_n(exports, n) {
+    let stack = exports.stack.value
+
+    while (true) {
+        if (stack === 0) { return 0 }
+
+        if (n === 0) {
+            return load(exports, stack, 0)    
+        }
+
+        stack = load(exports, stack, 1)
+        n--
+    }
+}
+
 function stack_top(exports) {
     return load(exports, exports.stack.value, 0)
 }
@@ -172,6 +187,45 @@ async function main() {
           code { UNPAIR; IF_LEFT { IF_LEFT { SWAP; SUB } { ADD } } { PUSH int 0 }; NIL operation; PAIR } }
     `, { prim: 'Right', args: [ { prim: 'Unit', args: [], annots: [] } ], annots: [] }, { int: 42 })
     assert(cdr(exports, stack_top(exports)) === 0)
+
+    exports = await eval(`
+        { parameter unit;
+          storage int;
+          code { PUSH int 1; PUSH int 2; PUSH int 3; PUSH int 4; PUSH int 5; DIG 2 } }
+    `, { prim: 'Unit', args: [], annots: [] }, { int: 0 })
+    assert(stack_n(exports, 0) === 3)
+    assert(stack_n(exports, 2) === 4)
+
+    exports = await eval(`
+        { parameter unit;
+          storage int;
+          code { PUSH int 1; PUSH int 2; PUSH int 3; PUSH int 4; PUSH int 5; DUG 2 } }
+    `, { prim: 'Unit', args: [], annots: [] }, { int: 0 })
+    assert(stack_n(exports, 0) === 4)
+    assert(stack_n(exports, 1) === 3)
+    assert(stack_n(exports, 2) === 5)
+
+    exports = await eval(`
+        { parameter unit;
+          storage int;
+          code { PUSH int 4; PUSH int 5; DROP } }
+    `, { prim: 'Unit', args: [], annots: [] }, { int: 0 })
+    assert(stack_n(exports, 0) === 4)
+
+    exports = await eval(`
+        { parameter unit;
+          storage int;
+          code { PUSH int 3; PUSH int 4; PUSH int 5; DROP 2 } }
+    `, { prim: 'Unit', args: [], annots: [] }, { int: 0 })
+    assert(stack_n(exports, 0) === 3)
+
+    exports = await eval(`
+        { parameter unit;
+          storage int;
+          code { PUSH int 4; PUSH int 5; DUP } }
+    `, { prim: 'Unit', args: [], annots: [] }, { int: 0 })
+    assert(stack_n(exports, 0) === 5)
+    assert(stack_n(exports, 1) === 5)
 }
 
 main()
