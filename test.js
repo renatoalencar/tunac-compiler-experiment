@@ -54,35 +54,39 @@ function stack_top(exports) {
     return load(exports, exports.stack.value, 0)
 }
 
-function encodeValue(exports, value) {
-    if ('int' in value) {
-        return value.int
+function intToBuffer(int) {
+    return Buffer.from(new Uint32Array([ int ]).buffer)
+}
+
+function encodeValue(value) {
+    if (value.int !== undefined) {
+        return intToBuffer(value.int)
     }
 
-    if ('string' in value) {
-        let addr = alloc(exports.heap, Math.ceil(value.string.length / 4))
-        for (let i = 0; i < value.string.length; i++) {
-            exports.buffer[addr + i] = value.string[i]
-        }
-
-        return addr
-    }
-
-    if ('prim' in value) {
+    if (value.prim) {
         switch (value.prim) {
-            case 'Left': {
-                let wrapped = encodeValue(exports, value.args[0])
-                return create_pair(exports, 1, wrapped)
-            }
-            case 'Right': {
-                let wrapped = encodeValue(exports, value.args[0])
-                return create_pair(exports, 0, wrapped)
-            }
-            case 'Unit': {
-                return 0
-            }
+            case 'Unit':
+                return intToBuffer(0)
+            case 'Pair':
+                return Buffer.concat([
+                    encodeValue(value.args[0]),
+                    encodeValue(value.args[1])
+                ])
+            case 'Left':
+                return Buffer.concat([
+                    intToBuffer(1),
+                    encodeValue(value.args[0])
+                ])
+            case 'Right':
+                return Buffer.concat([
+                    intToBuffer(0),
+                    encodeValue(value.args[0])
+                ])
         }
     }
+
+    console.log(value)
+    assert(false)
 }
 
 function inspect_all(exports) {
@@ -104,7 +108,7 @@ function inspect_all(exports) {
 
     console.log('Heap')
     for (let i = 512; i <= exports.heap.value; i += 4) {
-        console.log(' ', load(exports, i, 0))
+        console.log('%d | %d', i, load(exports, i, 0))
     }
 }
 
@@ -131,9 +135,32 @@ async function wasmModuleOfMichelson(code) {
 
 async function eval(code, parameter, storage) {
     const module = await wasmModuleOfMichelson(code)
-    const instance = new WebAssembly.Instance(module)
+
+    const parameterBuffer = encodeValue({
+        prim: 'Pair',
+        args: [ parameter, storage ],
+        annots: []
+    })
+
+    const imports = {
+        env: {
+            parameter_size() {
+                return parameterBuffer.length
+            },
+            parameter_load(ptr) {
+                // console.log('Parameter at %d', ptr)
+                for (let i = 0; i < parameterBuffer.length; i++) {
+                    bytes[i + ptr] = parameterBuffer[i]
+                }
+
+                return 0
+            }
+        }
+    }
+    const instance = new WebAssembly.Instance(module, imports)
 
     const memory = instance.exports.memory.buffer
+    const bytes = new Uint8Array(memory)
     const words = new Uint32Array(memory)
 
     const exports = {
@@ -143,9 +170,9 @@ async function eval(code, parameter, storage) {
         stack: instance.exports.stack
     }
 
-    parameter = encodeValue(exports, parameter)
-    storage = encodeValue(exports, storage)
-    push(exports, create_pair(exports, parameter, storage))
+    // parameter = encodeValue(exports, parameter)
+    // storage = encodeValue(exports, storage)
+    // push(exports, create_pair(exports, parameter, storage))
 
     // inspect_all(exports)
     instance.exports.main()
