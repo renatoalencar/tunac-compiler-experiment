@@ -18,25 +18,27 @@ let rec compile_expression wasm_mod expr =
 
 
 and compile_operation wasm_mod op params =
-  let alloc_param params =
-    match params with
-    | [] -> Cconst_i32 0l
-    | [ value ] -> value
-    | _ -> assert false
-  in
-
   match op, params with
   | Capply name, params -> Expression.Call.make wasm_mod name (List.map (compile_expression wasm_mod) params) Type.int32
   | Cload cell, [ ptr ] -> Expression.Load.make wasm_mod 4 (cell * 4) 0 Type.int32 (compile_expression wasm_mod ptr)
   | Calloc size, params ->
+    let final_size =
+      match size, params with
+      | 0, [ value ] -> compile_expression wasm_mod value
+      | size, [ ] -> Expression.Const.make wasm_mod (Literal.int32 (Int32.of_int (size * 4)))
+      | size, [ value ] ->
+        Expression.Binary.make wasm_mod Op.add_int32
+          (compile_expression wasm_mod value)
+          (Expression.Const.make wasm_mod (Literal.int32 (Int32.of_int (size * 4))))
+      | _ -> assert false
+    in
     Expression.Block.make wasm_mod (gensym "alloc")
-      [ Expression.Global_set.make wasm_mod "heap_top"
+      [ Expression.Local_set.make wasm_mod 0 (Expression.Global_get.make wasm_mod "heap_top" Type.int32)
+      ; Expression.Global_set.make wasm_mod "heap_top"
           (Expression.Binary.make wasm_mod Op.add_int32
             (Expression.Global_get.make wasm_mod "heap_top" Type.int32)
-            (Expression.Binary.make wasm_mod Op.add_int32
-              (compile_expression wasm_mod (alloc_param params))
-              (Expression.Const.make wasm_mod (Literal.int32 (Int32.of_int (size * 4))))))
-      ; Expression.Global_get.make wasm_mod "heap_top" Type.int32 ]
+            final_size)
+      ; Expression.Local_get.make wasm_mod 0 Type.int32 ]
   | Cwasm wasm_operation, params -> compile_wasm_operation wasm_mod wasm_operation params
 
   | _ -> assert false
@@ -127,6 +129,7 @@ let compile_ir ~env ast =
 
   Import.add_function_import wasm_mod "parameter_size" "env" "parameter_size" Type.none Type.int32;
   Import.add_function_import wasm_mod "parameter_load" "env" "parameter_load" Type.int32 Type.int32;
+  Import.add_function_import wasm_mod "save_storage" "env" "save_storage" Type.(create [| int32; int32 |]) Type.int32;
 
   Memory.set_memory wasm_mod 1 10 "memory" [] true;
 

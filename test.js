@@ -142,6 +142,8 @@ async function eval(code, parameter, storage) {
         annots: []
     })
 
+    let storageBuffer
+
     const imports = {
         env: {
             parameter_size() {
@@ -151,6 +153,15 @@ async function eval(code, parameter, storage) {
                 // console.log('Parameter at %d', ptr)
                 for (let i = 0; i < parameterBuffer.length; i++) {
                     bytes[i + ptr] = parameterBuffer[i]
+                }
+
+                return 0
+            },
+            save_storage(ptr, size) {
+                storageBuffer = Buffer.alloc(size)
+
+                for (let i = 0; i < size; i++) {
+                    storageBuffer[i] = bytes[ptr + i]
                 }
 
                 return 0
@@ -178,117 +189,120 @@ async function eval(code, parameter, storage) {
     instance.exports.main()
     // inspect_all(exports)
 
-    return exports
+    return { storage: storageBuffer, exports }
+}
+
+function assertStorage(res, value) {
+    assert.equal(res.storage.toString('hex'), value)
 }
 
 async function main() {
-    let exports = await eval(`
+    let res = await eval(`
         { parameter unit; storage int; code { CDR; NIL operation; PAIR } }
     `, { prim: 'Unit', args: [], annots: [] }, { int: 42 })
-    // inspect_all(exports)
-    assert(cdr(exports, stack_top(exports)) === 42)
+    assertStorage(res, '2a000000')
 
-    exports = await eval(`
+    res = await eval(`
         { parameter int; storage int; code { UNPAIR; ADD; NIL operation; PAIR } }
     `, { int: 13 }, { int: 42 })
-    assert(cdr(exports, stack_top(exports)) === 55)
+    assertStorage(res, '37000000')
 
-    exports = await eval(`
+    res = await eval(`
         { parameter (or (or int int) unit);
           storage int;
           code { UNPAIR; IF_LEFT { IF_LEFT { SWAP; SUB } { ADD } } { PUSH int 0 }; NIL operation; PAIR } }
     `, { prim: 'Left', args: [ { prim: 'Right', args: [ { int: 13 } ], annots: [] } ], annots: [] }, { int: 42 })
-    assert(cdr(exports, stack_top(exports)) === 55)
+    assertStorage(res, '37000000')
 
-    exports = await eval(`
+    res = await eval(`
         { parameter (or (or int int) unit);
           storage int;
           code { UNPAIR; IF_LEFT { IF_LEFT { SWAP; SUB } { ADD } } { PUSH int 0 }; NIL operation; PAIR } }
     `, { prim: 'Left', args: [ { prim: 'Left', args: [ { int: 13 } ], annots: [] } ], annots: [] }, { int: 42 })
-    assert(cdr(exports, stack_top(exports)) === 29)
-    // inspect_all(exports)
+    assertStorage(res, '1d000000')
 
-    exports = await eval(`
+    res = await eval(`
         { parameter (or (or int int) unit);
           storage int;
           code { UNPAIR; IF_LEFT { IF_LEFT { SWAP; SUB } { ADD } } { PUSH int 0 }; NIL operation; PAIR } }
     `, { prim: 'Right', args: [ { prim: 'Unit', args: [], annots: [] } ], annots: [] }, { int: 42 })
-    assert(cdr(exports, stack_top(exports)) === 0)
+    assertStorage(res, '00000000')
 
-    exports = await eval(`
+    res = await eval(`
         { parameter unit;
           storage int;
           code { PUSH int 1; PUSH int 2; PUSH int 3; PUSH int 4; PUSH int 5; DIG 2 } }
     `, { prim: 'Unit', args: [], annots: [] }, { int: 0 })
-    assert(stack_n(exports, 0) === 3)
-    assert(stack_n(exports, 2) === 4)
+    // inspect_all(res.exports)
+    assert(stack_n(res.exports, 0) === 3)
+    assert(stack_n(res.exports, 2) === 4)
 
-    exports = await eval(`
+    res = await eval(`
         { parameter unit;
           storage int;
           code { PUSH int 1; PUSH int 2; PUSH int 3; PUSH int 4; PUSH int 5; DUG 2 } }
     `, { prim: 'Unit', args: [], annots: [] }, { int: 0 })
-    assert(stack_n(exports, 0) === 4)
-    assert(stack_n(exports, 1) === 3)
-    assert(stack_n(exports, 2) === 5)
+    assert(stack_n(res.exports, 0) === 4)
+    assert(stack_n(res.exports, 1) === 3)
+    assert(stack_n(res.exports, 2) === 5)
 
-    exports = await eval(`
+    res = await eval(`
         { parameter unit;
           storage int;
           code { PUSH int 4; PUSH int 5; DROP } }
     `, { prim: 'Unit', args: [], annots: [] }, { int: 0 })
-    assert(stack_n(exports, 0) === 4)
+    assert(stack_n(res.exports, 0) === 4)
 
-    exports = await eval(`
+    res = await eval(`
         { parameter unit;
           storage int;
           code { PUSH int 3; PUSH int 4; PUSH int 5; DROP 2 } }
     `, { prim: 'Unit', args: [], annots: [] }, { int: 0 })
-    assert(stack_n(exports, 0) === 3)
+    assert(stack_n(res.exports, 0) === 3)
 
-    exports = await eval(`
+    res = await eval(`
         { parameter unit;
           storage int;
           code { PUSH int 4; PUSH int 5; DUP } }
     `, { prim: 'Unit', args: [], annots: [] }, { int: 0 })
-    assert(stack_n(exports, 0) === 5)
-    assert(stack_n(exports, 1) === 5)
+    assert(stack_n(res.exports, 0) === 5)
+    assert(stack_n(res.exports, 1) === 5)
 
-    exports = await eval(`
+    res = await eval(`
     { parameter unit;
       storage int;
       code { PUSH int 1; PUSH int 2; PUSH int 3; PUSH int 4; PUSH int 5; DUP 3 } }
     `, { prim: 'Unit', args: [], annots: [] }, { int: 0 })
-    assert(stack_n(exports, 0) === 3)
-    assert(stack_n(exports, 1) === 5)
+    assert(stack_n(res.exports, 0) === 3)
+    assert(stack_n(res.exports, 1) === 5)
 
 
-    exports = await eval(`
+    res = await eval(`
         { parameter unit;
           storage int;
           code { PUSH int 1; PUSH int 2; PUSH int 3; PUSH int 4; PUSH int 5; DIP 2 { PUSH int 7 } } }
     `, { prim: 'Unit', args: [], annots: [] }, { int: 0 })
-    assert(stack_n(exports, 0) == 5)
-    assert(stack_n(exports, 1) == 4)
-    assert(stack_n(exports, 2) == 7)
+    assert(stack_n(res.exports, 0) == 5)
+    assert(stack_n(res.exports, 1) == 4)
+    assert(stack_n(res.exports, 2) == 7)
 
-    exports = await eval(`
+    res = await eval(`
         { parameter unit;
           storage int;
           code { PUSH int 1; PUSH int 2; PUSH int 3; PUSH int 4; PUSH int 5; DIP { PUSH int 7 } } }
     `, { prim: 'Unit', args: [], annots: [] }, { int: 0 })
-    assert(stack_n(exports, 0) == 5)
-    assert(stack_n(exports, 1) == 7)
-    assert(stack_n(exports, 2) == 4)
+    assert(stack_n(res.exports, 0) == 5)
+    assert(stack_n(res.exports, 1) == 7)
+    assert(stack_n(res.exports, 2) == 4)
 
-    exports = await eval(`
+    res = await eval(`
         { parameter unit;
           storage int;
           code { PUSH int 1; PUSH int 2; PUSH int 3; PUSH int 4; PUSH int 5; DIP 0 { PUSH int 7 } } }
     `, { prim: 'Unit', args: [], annots: [] }, { int: 0 })
-    assert(stack_n(exports, 0) == 7)
-    assert(stack_n(exports, 1) == 5)
-    assert(stack_n(exports, 2) == 4)
+    assert(stack_n(res.exports, 0) == 7)
+    assert(stack_n(res.exports, 1) == 5)
+    assert(stack_n(res.exports, 2) == 4)
 }
 
 main()

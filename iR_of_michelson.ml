@@ -11,7 +11,7 @@ module Env = struct
 
   type t = { mutable allocated: Set.t; mutable max: int }
 
-  let make () = { allocated = Set.empty; max = -1 }
+  let make () = { allocated = Set.of_list [ 0 ]; max = 0 }
 
   let max t = t.max
 
@@ -362,6 +362,16 @@ let rec compile_value_decoder ~env typ var ptr =
 
   | _ -> assert false
 
+let compile_value_encoder ~env:_ typ ptr size value =
+  match typ with
+  | Prim (_, T_int, _, _) ->
+    Cblock
+      [ Cassign (ptr, Cop (Calloc 1, []))
+      ; Cstore (0, Cvar ptr, Cvar value)
+      ; Cassign (size, Cconst_i32 4l) ]
+
+  | _ -> assert false
+
 let compile_contract contract =
   let env = Env.make () in
   match contract with
@@ -374,7 +384,7 @@ let compile_contract contract =
     let parameter_var = Env.alloc_local env in
     let param_block =
       Cblock
-        [ Cassign (parameter, Cop (Calloc 1, [ Cop (Capply "parameter_size", []) ]))
+        [ Cassign (parameter, Cop (Calloc 0, [ Cop (Capply "parameter_size", []) ]))
         ; Cassign (q, Cop (Capply "parameter_load", [ Cvar parameter ]))
         ; Cassign (parameter_var, Cop (Calloc 2, []))
         ; compile_value_decoder ~env parameter_type q parameter
@@ -386,5 +396,21 @@ let compile_contract contract =
     Env.free_local env parameter;
     Env.free_local env q;
     Env.free_local env parameter_var;
-    Cblock (param_block :: List.map (compile_instruction ~env) code), env
+
+    let store_block =
+      let ptr = Env.alloc_local env in
+      let size = Env.alloc_local env in
+      let value = Env.alloc_local env in
+      let block =
+        [ Cassign (value, compile_cdr (compile_car (Cglobal "stack")))
+        ; compile_value_encoder ~env storage_type ptr size value
+        ; Cassign (value, Cop (Capply "save_storage", [ Cvar ptr; Cvar size ])) ]
+      in
+      Env.free_local env ptr;
+      Env.free_local env size;
+      Env.free_local env value;
+      block
+    in
+
+    Cblock (param_block :: List.map (compile_instruction ~env) code @ store_block), env
   | _ -> assert false
